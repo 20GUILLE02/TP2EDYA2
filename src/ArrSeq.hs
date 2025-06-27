@@ -3,6 +3,7 @@ import qualified Arr as A
 import Arr ((!))  -- para usar el operador `!` directamente
 import Seq (Seq(..), TreeView(..), ListView(..))
 import Language.Haskell.TH (safe)
+import Par
 
 instance Seq A.Arr where
     emptyS :: A.Arr a
@@ -38,8 +39,10 @@ instance Seq A.Arr where
     joinS = A.flatten
 
     reduceS :: (a -> a -> a) -> a -> A.Arr a -> a
-    reduceS f b arr = foldl f b (toList arr)
-        where toList s = [s ! i | i <- [0 .. A.length s - 1]]
+    reduceS f e arr = case lengthS arr of
+        0 -> e
+        1 -> f e (nthS arr 0)
+        otherwise -> let ct = contract f arr in reduceS f e ct
 
     tabulateS :: (Int -> a) -> Int -> A.Arr a
     tabulateS = A.tabulate
@@ -51,9 +54,13 @@ instance Seq A.Arr where
     filterS f arr = A.fromList [arr ! i | i <- [0 .. A.length arr - 1], f (arr ! i)]
 
     scanS :: (a -> a -> a) -> a -> A.Arr a -> (A.Arr a, a)
-    scanS f b arr = (A.fromList (init accs), last accs)
-        where accs = scanl f b (toList arr)
-              toList s = [s ! i | i <- [0 .. A.length s - 1]]
+    scanS f e arr = case lengthS arr of
+        0 -> (emptyS, e)
+        1 -> (singletonS e, f e (nthS arr 0))
+        otherwise -> let
+                        (s', r) = scanS f e ct
+                        ct = contract f arr
+                    in (expand f s' arr, r)
 
     showtS s
         | A.length s == 0 = EMPTY
@@ -68,3 +75,28 @@ instance Seq A.Arr where
         | A.length s == 0 = NIL
         | otherwise       = CONS (s ! 0) (A.subArray 1 (A.length s - 1) s)
 
+
+contract :: (a -> a -> a) -> A.Arr a -> A.Arr a
+contract f xs = case lengthS xs of
+    0 -> emptyS
+    1 -> xs
+    otherwise -> let
+                    x = nthS xs 0
+                    y = nthS xs 1
+                    (l, ys) = f x y ||| rest
+                    rest = contract f (dropS xs 2)
+                in appendS (singletonS l) ys
+
+expand :: (a -> a -> a) -> A.Arr a -> A.Arr a -> A.Arr a
+expand f xs ys = case lengthS ys of
+    0 -> xs
+    1 -> xs
+    otherwise -> let
+                    x = nthS xs 0
+                    y1 = nthS ys 0
+                    y2 = nthS ys 1
+                    xs' = dropS xs 1
+                    ys' = dropS ys 2
+                    ri = (f x y1)
+                    rs = expand f xs' ys'
+                in appendS (appendS (singletonS x) (singletonS ri)) rs
